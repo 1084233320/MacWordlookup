@@ -6,3 +6,10 @@ services:
     region: singapore
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
+    envVars:
+      - key: PUBLISH_TOKEN
+        sync: false
+      - key: READ_KEY
+        sync: false
+      - key: DATA_DIR
+        value: /tmp/mwl-data

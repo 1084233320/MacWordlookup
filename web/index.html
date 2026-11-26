@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<title>今日词单</title>
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+       justify-content: center; gap: 16px; padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+       font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+       background: #f5f5f7; color: #1d1d1f; }
+header { width: 100%; max-width: 420px; display: flex; justify-content: space-between;
+         font-size: 13px; opacity: .6; }
+.card { width: 100%; max-width: 420px; min-height: 260px; background: #fff; border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.08); display: flex; align-items: center;
+        justify-content: center; padding: 32px 24px; text-align: center; cursor: pointer;
+        user-select: none; }
+.word { font-size: 40px; font-weight: 600; letter-spacing: .5px; word-break: break-word; }
+.hint { margin-top: 16px; font-size: 12px; opacity: .4; }
+.back { display: none; }
+.flipped .front { display: none; }
+.flipped .back { display: block; }
+.trans { font-size: 24px; font-weight: 500; line-height: 1.5; word-break: break-word; }
+.phon { margin-top: 10px; font-size: 14px; opacity: .55;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.actions { width: 100%; max-width: 420px; display: flex; gap: 12px; }
+button { flex: 1; padding: 14px 0; font-size: 16px; border: 0; border-radius: 14px;
+         background: #e8e8ed; color: #1d1d1f; font-weight: 500; font-family: inherit; }
+button:active { transform: scale(.98); }
+.done { display: none; text-align: center; }
+.done h1 { font-size: 22px; margin: 0 0 8px; }
+.done p { margin: 0; font-size: 14px; opacity: .6; line-height: 1.6; }
+footer { width: 100%; max-width: 420px; display: flex; justify-content: space-between;
+         font-size: 12px; opacity: .45; }
+.link { background: none; border: 0; padding: 0; font-size: 12px; opacity: .6; flex: 0 0 auto; }
+@media (prefers-color-scheme: dark) {
+  body { background: #000; color: #f5f5f7; }
+  .card { background: #1c1c1e; box-shadow: none; }
+  button { background: #2c2c2e; color: #f5f5f7; }
+}
+</style>
+</head>
+<body>
+<header><span id="range">今日词单</span><span id="progress"></span></header>
+<main id="card" class="card">
+  <div class="front"><div class="word" id="word"></div><div class="hint">点击卡片看中文</div></div>
+  <div class="back"><div class="trans" id="trans"></div><div class="phon" id="phon"></div></div>
+</main>
+<div class="actions" id="actions">
+  <button id="again">再练</button>
+  <button id="known">认识</button>
+</div>
+<div class="done" id="done"><h1 id="doneTitle">本周期没有新词</h1><p id="summary"></p></div>
+<footer><span id="updated"></span><button class="link" id="reset">重置记忆</button></footer>
+<script>
+const STATE_KEY = 'mwl-known-v1';
+const CACHE_KEY = 'mwl-latest-v1';
+const card = document.getElementById('card');
+const wordEl = document.getElementById('word');
+const transEl = document.getElementById('trans');
+const phonEl = document.getElementById('phon');
+const progressEl = document.getElementById('progress');
+const actionsEl = document.getElementById('actions');
+const doneEl = document.getElementById('done');
+const summaryEl = document.getElementById('summary');
+const doneTitleEl = document.getElementById('doneTitle');
+const rangeEl = document.getElementById('range');
+const updatedEl = document.getElementById('updated');
+
+let allWords = [];
+let queue = [];
+
+function loadKnown() {
+  try { return JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch { return {}; }
+}
+function saveKnown(map) { localStorage.setItem(STATE_KEY, JSON.stringify(map)); }
+
+card.addEventListener('click', () => card.classList.toggle('flipped'));
+document.getElementById('known').addEventListener('click', () => {
+  if (!queue.length) return;
+  const map = loadKnown();
+  map[queue[0].word.toLowerCase()] = Date.now();
+  saveKnown(map);
+  queue.shift();
+  renderCard();
+});
+document.getElementById('again').addEventListener('click', () => {
+  if (!queue.length) return;
+  queue.push(queue.shift());
+  renderCard();
+});
+document.getElementById('reset').addEventListener('click', () => {
+  localStorage.removeItem(STATE_KEY);
+  render();
+});
+
+function fmt(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function render() {
+  const map = loadKnown();
+  queue = allWords.filter((w) => !map[w.word.toLowerCase()]);
+  renderCard();
+}
+
+function renderCard() {
+  if (queue.length === 0) {
+    card.style.display = 'none';
+    actionsEl.style.display = 'none';
+    doneEl.style.display = 'block';
+    progressEl.textContent = '';
+    if (allWords.length === 0) {
+      doneTitleEl.textContent = '本周期没有新词';
+      summaryEl.textContent = '等下一次发布后再来看看';
+    } else {
+      doneTitleEl.textContent = '本周期过完了';
+      summaryEl.textContent = '共 ' + allWords.length + ' 个词';
+    }
+    return;
+  }
+  card.style.display = 'flex';
+  actionsEl.style.display = 'flex';
+  doneEl.style.display = 'none';
+  const w = queue[0];
+  card.classList.remove('flipped');
+  wordEl.textContent = w.word;
+  transEl.textContent = w.translation;
+  phonEl.textContent = w.phonetic || '';
+  progressEl.textContent = (allWords.length - queue.length + 1) + ' / ' + allWords.length;
+}
+
+async function load() {
+  let latest = null;
+  try {
+    const res = await fetch('latest.json', { cache: 'no-store' });
+    if (res.ok) latest = await res.json();
+  } catch {}
+  if (!latest) {
+    try { latest = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch {}
+  }
+  if (!latest) {
+    doneTitleEl.textContent = '还没有词单';
+    doneEl.style.display = 'block';
+    return;
+  }
+  localStorage.setItem(CACHE_KEY, JSON.stringify(latest));
+  allWords = latest.words || [];
+  if (latest.windowStart && latest.windowEnd) {
+    rangeEl.textContent = fmt(latest.windowStart) + ' → ' + fmt(latest.windowEnd);
+  }
+  updatedEl.textContent = latest.generatedAt ? '更新于 ' + fmt(latest.generatedAt) : '';
+  render();
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+load();
+</script>
+</body>
+</html>

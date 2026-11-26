@@ -1,0 +1,4 @@
+data/
+server
+.DS_Store
+*.log

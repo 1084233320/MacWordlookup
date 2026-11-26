@@ -4,30 +4,37 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
-func helloHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte("hello zb"))
+	return fallback
 }
 
 func main() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/hello", helloHandler)
-	mux.HandleFunc("/", helloHandler)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
-	})
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	st, err := newStore(envOr("DATA_DIR", "./data"))
+	if err != nil {
+		log.Fatalf("init store: %v", err)
 	}
+
+	cfg := config{
+		publishToken: os.Getenv("PUBLISH_TOKEN"),
+		readKey:      os.Getenv("READ_KEY"),
+	}
+	if cfg.publishToken == "" || cfg.readKey == "" {
+		log.Printf("WARN: PUBLISH_TOKEN / READ_KEY 未设置，服务处于未配置状态")
+	}
+
+	port := envOr("PORT", "8080")
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           newMux(cfg, st),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
 	log.Printf("listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(srv.ListenAndServe())
 }

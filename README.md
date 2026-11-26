@@ -27,15 +27,30 @@ Mac 端按窗口发布词单 JSON，手机直接打开网页复习（PWA，可�
   "generatedAt": "2026-11-10T13:00:05Z",
   "words": [
     { "word": "Focus", "translation": "专注", "phonetic": "/ˈfəʊkəs/" }
+  ],
+  "history": [
+    {
+      "windowStart": "2026-11-08T13:00:00Z",
+      "windowEnd": "2026-11-09T13:00:00Z",
+      "generatedAt": "2026-11-10T13:00:05Z",
+      "words": [
+        { "word": "Past", "translation": "过去", "phonetic": "" }
+      ]
+    }
   ]
 }
 ```
 
-- 返回：`200 {"ok":true,"words":1}`；鉴权失败 401，结构不合法 400，超过 1MB 413
+- 返回：`200 {"ok":true,"words":1}`；鉴权失败 401，结构不合法 400，超过 4MB 413
+- `history` 可选，最多 200 个窗口 / 20000 个词；每次发布覆盖写入
 
 `GET /latest.json`
 
 - 返回：最近一次发布的词单；从未发布时返回 `{"version":1,"words":[]}`
+
+`GET /history.json`
+
+- 返回：`{"version":1,"windows":[...]}`，按新到旧排列；载荷没有 `history` 时回退为最新窗口
 
 `GET /`
 

@@ -23,15 +23,25 @@ type config struct {
 }
 
 type payload struct {
-	Version     int    `json:"version"`
+	Version     int      `json:"version"`
+	WindowStart string   `json:"windowStart"`
+	WindowEnd   string   `json:"windowEnd"`
+	GeneratedAt string   `json:"generatedAt"`
+	Words       []word   `json:"words"`
+	History     []window `json:"history,omitempty"`
+}
+
+type window struct {
 	WindowStart string `json:"windowStart"`
 	WindowEnd   string `json:"windowEnd"`
 	GeneratedAt string `json:"generatedAt"`
-	Words       []struct {
-		Word        string `json:"word"`
-		Translation string `json:"translation"`
-		Phonetic    string `json:"phonetic"`
-	} `json:"words"`
+	Words       []word `json:"words"`
+}
+
+type word struct {
+	Word        string `json:"word"`
+	Translation string `json:"translation"`
+	Phonetic    string `json:"phonetic"`
 }
 
 func newMux(cfg config, st *store) *http.ServeMux {
@@ -41,6 +51,9 @@ func newMux(cfg config, st *store) *http.ServeMux {
 	})
 	mux.HandleFunc("/latest.json", func(w http.ResponseWriter, r *http.Request) {
 		handleLatest(st, w, r)
+	})
+	mux.HandleFunc("/history.json", func(w http.ResponseWriter, r *http.Request) {
+		handleHistory(st, w, r)
 	})
 	mux.HandleFunc("/manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
 		handleAsset(w, r, "application/manifest+json; charset=utf-8", false, manifestJSON)
@@ -87,6 +100,34 @@ func handleLatest(st *store, w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"version": 1, "words": []any{}})
 }
 
+func handleHistory(st *store, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+
+	windows := []window{}
+	if data, ok := st.latestPayload(); ok {
+		var p payload
+		if err := json.Unmarshal(data, &p); err != nil {
+			http.Error(w, "invalid stored payload", http.StatusInternalServerError)
+			return
+		}
+		if len(p.History) > 0 {
+			windows = p.History
+		} else {
+			windows = append(windows, window{
+				WindowStart: p.WindowStart,
+				WindowEnd:   p.WindowEnd,
+				GeneratedAt: p.GeneratedAt,
+				Words:       p.Words,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": 1, "windows": windows})
+}
+
 func handleAsset(w http.ResponseWriter, r *http.Request, contentType string, noStore bool, data []byte) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -113,7 +154,7 @@ func handlePublish(cfg config, st *store, w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
 	if err != nil {
 		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
 		return
@@ -148,12 +189,30 @@ func validPayload(p *payload) bool {
 	if len(p.Words) > 5000 {
 		return false
 	}
-	for _, word := range p.Words {
-		if word.Word == "" {
+	total := len(p.Words)
+	for _, w := range p.Words {
+		if w.Word == "" {
 			return false
 		}
 	}
-	return true
+	if len(p.History) > 200 {
+		return false
+	}
+	for _, win := range p.History {
+		if win.WindowStart == "" || win.WindowEnd == "" {
+			return false
+		}
+		if len(win.Words) > 5000 {
+			return false
+		}
+		total += len(win.Words)
+		for _, w := range win.Words {
+			if w.Word == "" {
+				return false
+			}
+		}
+	}
+	return total <= 20000
 }
 
 func bearerMatches(header, want string) bool {

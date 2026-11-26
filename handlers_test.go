@@ -124,6 +124,122 @@ func TestReadWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestPublishHistoryAndRead(t *testing.T) {
+	srv := newTestServer(t, config{publishToken: "secret"})
+	body, err := json.Marshal(map[string]any{
+		"version":     1,
+		"windowStart": "2026-11-09T13:00:00Z",
+		"windowEnd":   "2026-11-10T13:00:00Z",
+		"generatedAt": "2026-11-10T13:00:05Z",
+		"words": []map[string]any{
+			{"word": "Focus", "translation": "专注", "phonetic": "/ˈfəʊkəs/"},
+		},
+		"history": []map[string]any{
+			{
+				"windowStart": "2026-11-08T13:00:00Z",
+				"windowEnd":   "2026-11-09T13:00:00Z",
+				"generatedAt": "2026-11-10T13:00:05Z",
+				"words": []map[string]any{
+					{"word": "Past", "translation": "过去", "phonetic": ""},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/publish", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("publish status = %d, want 200", resp.StatusCode)
+	}
+
+	history, err := http.Get(srv.URL + "/history.json")
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	defer history.Body.Close()
+	if history.StatusCode != http.StatusOK {
+		t.Fatalf("history status = %d", history.StatusCode)
+	}
+	var got struct {
+		Version int      `json:"version"`
+		Windows []window `json:"windows"`
+	}
+	if err := json.NewDecoder(history.Body).Decode(&got); err != nil {
+		t.Fatalf("decode history: %v", err)
+	}
+	if got.Version != 1 || len(got.Windows) != 1 {
+		t.Fatalf("unexpected history: %+v", got)
+	}
+	if len(got.Windows[0].Words) != 1 || got.Windows[0].Words[0].Word != "Past" {
+		t.Fatalf("unexpected history window: %+v", got.Windows[0])
+	}
+}
+
+func TestHistoryFallsBackToLatestWindow(t *testing.T) {
+	srv := newTestServer(t, config{publishToken: "secret"})
+	body := samplePayload(t)
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/publish", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	resp.Body.Close()
+
+	history, err := http.Get(srv.URL + "/history.json")
+	if err != nil {
+		t.Fatalf("get history: %v", err)
+	}
+	defer history.Body.Close()
+	var got struct {
+		Windows []window `json:"windows"`
+	}
+	if err := json.NewDecoder(history.Body).Decode(&got); err != nil {
+		t.Fatalf("decode history: %v", err)
+	}
+	if len(got.Windows) != 1 || got.Windows[0].WindowEnd != "2026-11-10T13:00:00Z" {
+		t.Fatalf("unexpected fallback history: %+v", got)
+	}
+	if len(got.Windows[0].Words) != 1 || got.Windows[0].Words[0].Word != "Focus" {
+		t.Fatalf("unexpected fallback words: %+v", got.Windows[0].Words)
+	}
+}
+
+func TestPublishRejectsInvalidHistory(t *testing.T) {
+	srv := newTestServer(t, config{publishToken: "secret"})
+	body, err := json.Marshal(map[string]any{
+		"version":     1,
+		"windowStart": "2026-11-09T13:00:00Z",
+		"windowEnd":   "2026-11-10T13:00:00Z",
+		"generatedAt": "2026-11-10T13:00:05Z",
+		"words":       []map[string]any{},
+		"history": []map[string]any{
+			{"windowStart": "2026-11-08T13:00:00Z", "words": []map[string]any{}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/publish", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestPublishAuthAndValidation(t *testing.T) {
 	srv := newTestServer(t, config{publishToken: "secret"})
 
@@ -190,7 +306,7 @@ func TestUnconfigured(t *testing.T) {
 func TestHealthAndAssets(t *testing.T) {
 	srv := newTestServer(t, config{publishToken: "secret"})
 
-	for _, path := range []string{"/health", "/", "/manifest.webmanifest", "/sw.js"} {
+	for _, path := range []string{"/health", "/", "/manifest.webmanifest", "/sw.js", "/history.json"} {
 		resp, err := http.Get(srv.URL + path)
 		if err != nil {
 			t.Fatalf("get %s: %v", path, err)

@@ -20,12 +20,9 @@ func main() {
 		log.Fatalf("init store: %v", err)
 	}
 
-	cfg := config{
-		publishToken: os.Getenv("PUBLISH_TOKEN"),
-		readKey:      os.Getenv("READ_KEY"),
-	}
-	if cfg.publishToken == "" || cfg.readKey == "" {
-		log.Printf("WARN: PUBLISH_TOKEN / READ_KEY 未设置，服务处于未配置状态")
+	cfg := config{publishToken: os.Getenv("PUBLISH_TOKEN")}
+	if cfg.publishToken == "" {
+		log.Printf("WARN: PUBLISH_TOKEN 未设置，发布接口返回 503；读取接口公开可用")
 	}
 
 	port := envOr("PORT", "8080")

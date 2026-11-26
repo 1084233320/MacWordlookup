@@ -39,7 +39,7 @@ func samplePayload(t *testing.T) []byte {
 }
 
 func TestPublishAndRead(t *testing.T) {
-	srv := newTestServer(t, config{publishToken: "secret", readKey: "rk"})
+	srv := newTestServer(t, config{publishToken: "secret"})
 	body := samplePayload(t)
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/publish", bytes.NewReader(body))
@@ -53,7 +53,7 @@ func TestPublishAndRead(t *testing.T) {
 		t.Fatalf("publish status = %d, want 200", resp.StatusCode)
 	}
 
-	latest, err := http.Get(srv.URL + "/r/rk/latest.json")
+	latest, err := http.Get(srv.URL + "/latest.json")
 	if err != nil {
 		t.Fatalf("get latest: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestPublishAndRead(t *testing.T) {
 		t.Fatalf("missing window fields: %+v", got)
 	}
 
-	page, err := http.Get(srv.URL + "/r/rk/")
+	page, err := http.Get(srv.URL + "/")
 	if err != nil {
 		t.Fatalf("get page: %v", err)
 	}
@@ -85,21 +85,29 @@ func TestPublishAndRead(t *testing.T) {
 	}
 }
 
-func TestReadRejectsWrongKey(t *testing.T) {
-	srv := newTestServer(t, config{publishToken: "secret", readKey: "rk"})
-	resp, err := http.Get(srv.URL + "/r/wrong/latest.json")
+func TestLegacyReadPathRedirects(t *testing.T) {
+	srv := newTestServer(t, config{publishToken: "secret"})
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(srv.URL + "/r/anything/")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("status = %d, want 302", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/" {
+		t.Fatalf("location = %q, want /", loc)
 	}
 }
 
 func TestReadWhenEmpty(t *testing.T) {
-	srv := newTestServer(t, config{publishToken: "secret", readKey: "rk"})
-	resp, err := http.Get(srv.URL + "/r/rk/latest.json")
+	srv := newTestServer(t, config{publishToken: "secret"})
+	resp, err := http.Get(srv.URL + "/latest.json")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -117,7 +125,7 @@ func TestReadWhenEmpty(t *testing.T) {
 }
 
 func TestPublishAuthAndValidation(t *testing.T) {
-	srv := newTestServer(t, config{publishToken: "secret", readKey: "rk"})
+	srv := newTestServer(t, config{publishToken: "secret"})
 
 	cases := []struct {
 		name   string
@@ -160,20 +168,29 @@ func TestUnconfigured(t *testing.T) {
 		t.Fatalf("publish status = %d, want 503", resp.StatusCode)
 	}
 
-	page, err := http.Get(srv.URL + "/r/anything/")
+	latest, err := http.Get(srv.URL + "/latest.json")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	latest.Body.Close()
+	if latest.StatusCode != http.StatusOK {
+		t.Fatalf("latest status = %d, want 200 (read stays public)", latest.StatusCode)
+	}
+
+	page, err := http.Get(srv.URL + "/")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	page.Body.Close()
-	if page.StatusCode != http.StatusNotFound {
-		t.Fatalf("page status = %d, want 404", page.StatusCode)
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("page status = %d, want 200", page.StatusCode)
 	}
 }
 
 func TestHealthAndAssets(t *testing.T) {
-	srv := newTestServer(t, config{publishToken: "secret", readKey: "rk"})
+	srv := newTestServer(t, config{publishToken: "secret"})
 
-	for _, path := range []string{"/health", "/", "/r/rk/manifest.webmanifest", "/r/rk/sw.js"} {
+	for _, path := range []string{"/health", "/", "/manifest.webmanifest", "/sw.js"} {
 		resp, err := http.Get(srv.URL + path)
 		if err != nil {
 			t.Fatalf("get %s: %v", path, err)

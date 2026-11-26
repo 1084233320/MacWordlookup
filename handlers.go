@@ -20,7 +20,6 @@ var swJS []byte
 
 type config struct {
 	publishToken string
-	readKey      string
 }
 
 type payload struct {
@@ -40,22 +39,64 @@ func newMux(cfg config, st *store) *http.ServeMux {
 	mux.HandleFunc("/publish", func(w http.ResponseWriter, r *http.Request) {
 		handlePublish(cfg, st, w, r)
 	})
+	mux.HandleFunc("/latest.json", func(w http.ResponseWriter, r *http.Request) {
+		handleLatest(st, w, r)
+	})
+	mux.HandleFunc("/manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
+		handleAsset(w, r, "application/manifest+json; charset=utf-8", false, manifestJSON)
+	})
+	mux.HandleFunc("/sw.js", func(w http.ResponseWriter, r *http.Request) {
+		handleAsset(w, r, "application/javascript; charset=utf-8", true, swJS)
+	})
 	mux.HandleFunc("/r/", func(w http.ResponseWriter, r *http.Request) {
-		handleRead(cfg, st, w, r)
+		http.Redirect(w, r, "/", http.StatusFound)
 	})
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("macwordlookup publish service\n"))
-	})
+	mux.HandleFunc("/", handleIndex)
 	return mux
+}
+
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(indexHTML)
+}
+
+func handleLatest(st *store, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	if data, ok := st.latestPayload(); ok {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write(data)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": 1, "words": []any{}})
+}
+
+func handleAsset(w http.ResponseWriter, r *http.Request, contentType string, noStore bool, data []byte) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	if noStore {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	_, _ = w.Write(data)
 }
 
 func handlePublish(cfg config, st *store, w http.ResponseWriter, r *http.Request) {
@@ -98,51 +139,6 @@ func handlePublish(cfg config, st *store, w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "words": len(p.Words)})
-}
-
-func handleRead(cfg config, st *store, w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if cfg.readKey == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	rest := strings.TrimPrefix(r.URL.Path, "/r/")
-	key, asset, hasAsset := strings.Cut(rest, "/")
-	if !constantTimeEqual(key, cfg.readKey) {
-		http.NotFound(w, r)
-		return
-	}
-	if !hasAsset || asset == "" {
-		asset = ""
-	}
-
-	switch asset {
-	case "":
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(indexHTML)
-	case "latest.json":
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		if data, ok := st.latestPayload(); ok {
-			_, _ = w.Write(data)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"version": 1, "words": []any{}})
-	case "manifest.webmanifest":
-		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
-		_, _ = w.Write(manifestJSON)
-	case "sw.js":
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(swJS)
-	default:
-		http.NotFound(w, r)
-	}
 }
 
 func validPayload(p *payload) bool {
